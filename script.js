@@ -115,7 +115,7 @@
     ui.test.textContent = simulated ? 'Stop test' : 'Start test';
     ui.testState.textContent = simulated ? 'ON' : 'OFF';
     ui.updated.textContent = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(new Date());
-    syncTone();
+    syncSiren();
   }
 
   async function fetchData() {
