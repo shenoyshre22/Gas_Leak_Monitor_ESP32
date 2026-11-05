@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1220">
+  <title>Gas &amp; Smoke Monitoring System</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Gas and smoke monitoring system home">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <span><strong>GAS &amp; SMOKE MONITORING SYSTEM</strong><small>IoT-based real-time safety monitoring</small></span>
+      </a>
+      <div class="connection">
+        <span class="connection-dot" id="connectionDot"></span>
+        <span><strong id="connectionLabel">Connecting to ESP32</strong><small id="connectionDetail">Waiting for sensor data</small></span>
+      </div>
+      <div class="updated"><small>LAST UPDATED</small><strong id="updatedAt">—</strong></div>
+    </header>
+
+    <section class="endpoint-bar" aria-label="ESP32 connection settings">
+      <span class="wifi-icon" aria-hidden="true">⌁</span>
+      <label for="deviceAddress">ESP32 address</label>
+      <input id="deviceAddress" type="url" inputmode="url" placeholder="http://192.168.1.x" autocomplete="url">
+      <button id="connectButton" class="button button-quiet" type="button">Connect</button>
+      <span class="endpoint-hint" id="networkStatus">Enter the IP shown in the ESP32 Serial Monitor</span>
+    </section>
+
+    <section class="status-panel status-safe" id="statusPanel" aria-live="polite">
+      <div class="status-icon" id="statusIcon" aria-hidden="true"><span></span></div>
+      <div class="status-copy">
+        <div class="eyebrow" id="statusEyebrow">SYSTEM STATUS</div>
+        <h1 id="statusTitle">Awaiting sensor data</h1>
+        <p id="statusMessage">Connect to the ESP32 to view live MQ-2 readings.</p>
+      </div>
+      <div class="status-side"><span class="status-label">OPERATING MODE</span><strong id="operatingMode">—</strong><span class="status-label status-spaced">SENSOR WARM-UP</span><strong id="warmupState">—</strong></div>
+    </section>
+
+    <div class="content-grid">
+      <section class="panel telemetry-panel">
+        <div class="panel-heading"><div><span class="eyebrow">LIVE TELEMETRY</span><h2>Sensor readings</h2></div><span class="live-tag"><i></i> LIVE</span></div>
+        <div class="reading-row"><div><span class="metric-label">MQ-2 RAW READING</span><div class="reading-value"><strong id="readingValue">—</strong><span>ADC counts</span></div></div><div class="threshold-tile"><span class="metric-label">CONFIGURED THRESHOLD</span><strong id="thresholdValue">—</strong><span>ADC counts</span></div></div>
+        <div class="delta-row"><span>Difference from threshold</span><strong id="deltaValue">—</strong></div>
+        <div class="gauge-wrap"><div class="gauge" id="gauge" role="meter" aria-label="MQ-2 raw reading" aria-valuemin="0" aria-valuemax="4095" aria-valuenow="0"><div class="gauge-fill" id="gaugeFill"></div><div class="threshold-marker" id="thresholdMarker"></div></div><div class="gauge-labels"><span>0</span><span>Threshold <b id="gaugeThreshold">—</b></span><span>4095</span></div></div>
+        <p class="telemetry-note">Raw analog-to-digital converter counts · MQ-2 sensor</p>
+      </section>
+
+      <section class="panel indicators-panel">
+        <div class="panel-heading"><div><span class="eyebrow">CONTROL PANEL</span><h2>Hardware indicators</h2></div><span class="panel-code">PANEL 01</span></div>
+        <div class="indicator-list">
+          <div class="indicator" id="greenIndicator"><div class="led housing green-lens" aria-hidden="true"><span class="led-reflection"></span></div><div class="indicator-copy"><strong>Green indicator</strong><span>Normal / safe</span></div><span class="state-pill" id="greenState">OFF</span></div>
+          <div class="indicator" id="redIndicator"><div class="led housing red-lens" aria-hidden="true"><span class="led-reflection"></span></div><div class="indicator-copy"><strong>Red indicator</strong><span>Warning</span></div><span class="state-pill" id="redState">OFF</span></div>
+          <div class="indicator" id="buzzerIndicator"><div class="buzzer-housing" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M10 29h5l5-5V14a4 4 0 0 1 8 0v10l5 5h5v6H10z"/><path d="M18 39h12M37 17l4-4M39 23h5M11 17l-4-4" class="sound-wave"/></svg></div><div class="indicator-copy"><strong>Audible alarm</strong><span>Browser simulated</span></div><span class="state-pill" id="buzzerState">INACTIVE</span></div>
+        </div>
+        <div class="hardware-note"><span class="note-icon">i</span> LEDs reflect the sensor alert state. Audible alarm is simulated in this browser.</div>
+      </section>
+    </div>
+
+    <section class="panel controls-panel">
+      <div class="panel-heading controls-heading"><div><span class="eyebrow">OPERATOR CONTROLS</span><h2>Alarm controls</h2></div><span class="control-note">Test mode changes the ESP32 simulation state.</span></div>
+      <div class="control-row">
+        <div class="control-description"><span class="control-symbol sound-symbol" aria-hidden="true">♪</span><div><strong>Audible alarm</strong><small>Browser sound output</small></div></div>
+        <button class="toggle" id="soundToggle" type="button" role="switch" aria-checked="false" aria-label="Toggle audible alarm sound"><span></span></button>
+        <span class="control-state" id="soundState">MUTED</span>
+        <div class="control-divider"></div>
+        <div class="control-description"><span class="control-symbol test-symbol" aria-hidden="true">◉</span><div><strong>Test alarm</strong><small>ESP32 simulation endpoint</small></div></div>
+        <button class="button button-test" id="testButton" type="button" aria-pressed="false" disabled>Start test</button>
+        <span class="control-state" id="testState">OFF</span>
+      </div>
+    </section>
+
+    <footer class="footer"><span>SAFETY MONITORING · REAL-TIME DEVICE DATA</span><div><span>CONTROLLER <b>ESP32</b></span><span>SENSOR <b>MQ-2</b></span><span>CLOUD <b>ThingSpeak</b></span></div></footer>
+  </main>
+  <script src="script.js"></script>
+</body>
+</html>
