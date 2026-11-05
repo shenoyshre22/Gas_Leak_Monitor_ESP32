@@ -1,19 +1,22 @@
+
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include "secrets.h"
 
+// ===== 1. CONFIGURATION =====
+
 const char* WIFI_SSID = SECRET_WIFI_SSID;
 const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
 const char* TS_API_KEY = SECRET_TS_API_KEY;
-# not uploading my password here for safety reasons. Please replace the above values with your own Wi-Fi credentials and ThingSpeak API key.
 
 const bool AUTO_BASELINE = true;
 
-int MARGIN = 400;
+// Sensitivity settings
+int MARGIN = 300;
 int THRESHOLD = 1800;
 
-const int HYSTERESIS = 150;
+const int HYSTERESIS = 75;
 
 const unsigned long WARMUP_MS = 180000UL;
 const unsigned long READ_MS = 1000;
@@ -45,14 +48,18 @@ unsigned long warmEnd = 0;
 // ===== 5. READ MQ-2 =====
 
 int readMQ2() {
+
   long sum = 0;
 
-  for (int i = 0; i < 16; i++) {
+  // Average 8 sensor readings
+  for (int i = 0; i < 8; i++) {
+
     sum += analogRead(PIN_MQ2);
+
     delay(2);
   }
 
-  return sum / 16;
+  return sum / 8;
 }
 
 
@@ -61,20 +68,27 @@ int readMQ2() {
 void connectWiFi(unsigned long timeoutMs) {
 
   WiFi.mode(WIFI_STA);
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   unsigned long t0 = millis();
 
-  while (WiFi.status() != WL_CONNECTED &&
-         millis() - t0 < timeoutMs) {
+  while (
+    WiFi.status() != WL_CONNECTED &&
+    millis() - t0 < timeoutMs
+  ) {
 
     delay(500);
+
     Serial.print(".");
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+
     Serial.println("\nWi-Fi connected");
+
   } else {
+
     Serial.println("\nWi-Fi NOT connected (running offline)");
   }
 }
@@ -89,6 +103,7 @@ void showIP() {
     ipShown = true;
 
     Serial.print("ESP32 IP address: ");
+
     Serial.println(WiFi.localIP());
   }
 }
@@ -99,7 +114,9 @@ void showIP() {
 void uploadToThingSpeak(int raw, bool alert) {
 
   if (WiFi.status() != WL_CONNECTED) {
+
     Serial.println("Upload skipped: no Wi-Fi");
+
     return;
   }
 
@@ -146,17 +163,20 @@ void calibrate() {
   baseline = sum / 50;
 
   if (AUTO_BASELINE) {
+
     THRESHOLD = baseline + MARGIN;
   }
 
   if (THRESHOLD > 2900) {
+
     THRESHOLD = 2900;
   }
 
   Serial.printf(
-    "Baseline=%d  Threshold=%d\n",
+    "Baseline=%d  Threshold=%d  Margin=%d\n",
     baseline,
-    THRESHOLD
+    THRESHOLD,
+    MARGIN
   );
 }
 
@@ -170,6 +190,7 @@ void handleData() {
     : 0;
 
   if (left < 0) {
+
     left = 0;
   }
 
@@ -183,6 +204,7 @@ void handleData() {
     "}";
 
   server.sendHeader("Cache-Control", "no-store");
+
   server.sendHeader("Access-Control-Allow-Origin", "*");
 
   server.send(200, "application/json", j);
@@ -194,6 +216,7 @@ void handleData() {
 void handleSim() {
 
   if (server.hasArg("on")) {
+
     simulate = (server.arg("on") == "1");
   }
 
@@ -220,6 +243,7 @@ void setup() {
   Serial.begin(115200);
 
   analogReadResolution(12);
+
   analogSetPinAttenuation(PIN_MQ2, ADC_11db);
 
   connectWiFi(15000);
@@ -229,14 +253,25 @@ void setup() {
   // API endpoints
 
   server.on("/data", HTTP_GET, handleData);
+
   server.on("/sim", HTTP_GET, handleSim);
 
   // CORS preflight support
 
   server.on("/sim", HTTP_OPTIONS, []() {
+
     server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.sendHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    server.sendHeader(
+      "Access-Control-Allow-Methods",
+      "GET, OPTIONS"
+    );
+
+    server.sendHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type"
+    );
+
     server.send(204);
   });
 
@@ -285,7 +320,7 @@ void loop() {
   unsigned long now = millis();
 
 
-  // SENSOR READING
+  // ===== SENSOR READING =====
 
   if (now - lastRead >= READ_MS) {
 
@@ -306,7 +341,7 @@ void loop() {
     }
 
 
-    // ALERT DETECTION
+    // ===== ALERT DETECTION =====
 
     bool wasAlarm = alarmOn;
 
@@ -314,20 +349,30 @@ void loop() {
 
       alarmOn = false;
 
-    } else if (!alarmOn && lastRaw >= THRESHOLD) {
+    } else {
 
-      alarmOn = true;
+      // Activate immediately when threshold is crossed
 
-    } else if (
-      alarmOn &&
-      lastRaw < THRESHOLD - HYSTERESIS
-    ) {
+      if (!alarmOn && lastRaw >= THRESHOLD) {
 
-      alarmOn = false;
+        alarmOn = true;
+
+      }
+
+      // Clear only after falling below threshold
+      // minus hysteresis
+
+      else if (
+        alarmOn &&
+        lastRaw < (THRESHOLD - HYSTERESIS)
+      ) {
+
+        alarmOn = false;
+      }
     }
 
 
-    // ALERT STATUS MESSAGE
+    // ===== ALERT STATUS MESSAGE =====
 
     if (alarmOn != wasAlarm) {
 
@@ -339,12 +384,13 @@ void loop() {
     }
 
 
-    // SERIAL OUTPUT
+    // ===== SERIAL OUTPUT =====
 
     Serial.printf(
       "raw=%d threshold=%d state=%s%s%s\n",
 
       lastRaw,
+
       THRESHOLD,
 
       alarmOn ? "WARNING" : "NORMAL",
@@ -356,13 +402,14 @@ void loop() {
   }
 
 
-  // THINGSPEAK UPLOAD
+  // ===== THINGSPEAK UPLOAD =====
 
   if (!warming && now - lastUpload >= UPLOAD_MS) {
 
     lastUpload = now;
 
     if (WiFi.status() != WL_CONNECTED) {
+
       WiFi.reconnect();
     }
 
