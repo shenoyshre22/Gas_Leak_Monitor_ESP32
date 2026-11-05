@@ -3,16 +3,11 @@
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include <PubSubClient.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 #include "secrets.h"
 
 // ===== 1. CONFIGURATION =====
@@ -43,16 +38,6 @@ const uint16_t MQTT_PORT = 1883;
 const char* MQTT_TOPIC = "channels/3566022/publish";
 const unsigned long MQTT_RETRY_MS = 5000UL;
 
-const char* BLE_DEVICE_NAME = "GasLeakMonitor";
-const char* BLE_SERVICE_UUID = "12345678-1234-1234-1234-123456789000";
-const char* BLE_SENSOR_READING_UUID = "12345678-1234-1234-1234-123456789001";
-const char* BLE_THRESHOLD_UUID = "12345678-1234-1234-1234-123456789002";
-const char* BLE_ALERT_STATUS_UUID = "12345678-1234-1234-1234-123456789003";
-const char* BLE_MAX_READING_UUID = "12345678-1234-1234-1234-123456789004";
-const char* BLE_AVERAGE_READING_UUID = "12345678-1234-1234-1234-123456789005";
-const char* BLE_WARNING_COUNT_UUID = "12345678-1234-1234-1234-123456789006";
-const char* BLE_WARNING_DURATION_UUID = "12345678-1234-1234-1234-123456789007";
-
 // ===== 2. SENSOR PIN =====
 
 const int PIN_MQ2 = 34;
@@ -72,28 +57,6 @@ struct MqttPublishMessage {
 
 QueueHandle_t mqttPublishQueue = nullptr;
 volatile bool mqttConnected = false;
-
-struct BleSnapshot {
-  char sensorReading[16];
-  char threshold[16];
-  char alertStatus[12];
-  char maxReading[16];
-  char averageReading[20];
-  char warningCount[16];
-  char warningDuration[24];
-};
-
-BLEServer* bleServer = nullptr;
-BLECharacteristic* bleSensorReading = nullptr;
-BLECharacteristic* bleThreshold = nullptr;
-BLECharacteristic* bleAlertStatus = nullptr;
-BLECharacteristic* bleMaxReading = nullptr;
-BLECharacteristic* bleAverageReading = nullptr;
-BLECharacteristic* bleWarningCount = nullptr;
-BLECharacteristic* bleWarningDuration = nullptr;
-QueueHandle_t bleUpdateQueue = nullptr;
-volatile bool bleClientConnected = false;
-volatile bool bleRestartAdvertising = false;
 
 // ===== 4. VARIABLES =====
 
@@ -122,215 +85,6 @@ uint32_t rollingSum = 0;
 unsigned long lastRead = 0;
 unsigned long lastUpload = 0;
 unsigned long warmEnd = 0;
-
-
-// ===== BLE GATT SERVER =====
-
-class GasLeakBleServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer* server) override {
-    (void)server;
-    bleClientConnected = true;
-    Serial.println("BLE client connected");
-  }
-
-  void onDisconnect(BLEServer* server) override {
-    (void)server;
-    bleClientConnected = false;
-    bleRestartAdvertising = true;
-    Serial.println("BLE client disconnected");
-  }
-};
-
-
-uint64_t warningDurationAt(unsigned long now);
-
-
-void setBleCharacteristicIfChanged(
-  BLECharacteristic* characteristic,
-  const char* value
-) {
-  if (characteristic == nullptr) {
-    return;
-  }
-
-  String nextValue(value);
-  if (characteristic->getValue() == nextValue) {
-    return;
-  }
-
-  characteristic->setValue(nextValue);
-
-  // Notify only after a subscribed client has enabled the CCCD.
-  BLE2902* cccd = (BLE2902*)characteristic->getDescriptorByUUID(
-    BLEUUID((uint16_t)0x2902)
-  );
-  if (
-    bleClientConnected &&
-    cccd != nullptr &&
-    cccd->getNotifications()
-  ) {
-    characteristic->notify();
-  }
-}
-
-
-void applyBleSnapshot(const BleSnapshot& snapshot) {
-  setBleCharacteristicIfChanged(bleSensorReading, snapshot.sensorReading);
-  setBleCharacteristicIfChanged(bleThreshold, snapshot.threshold);
-  setBleCharacteristicIfChanged(bleAlertStatus, snapshot.alertStatus);
-  setBleCharacteristicIfChanged(bleMaxReading, snapshot.maxReading);
-  setBleCharacteristicIfChanged(bleAverageReading, snapshot.averageReading);
-  setBleCharacteristicIfChanged(bleWarningCount, snapshot.warningCount);
-  setBleCharacteristicIfChanged(bleWarningDuration, snapshot.warningDuration);
-}
-
-
-void bleWorkerTask(void* parameter) {
-  (void)parameter;
-
-  for (;;) {
-    if (bleRestartAdvertising) {
-      bleRestartAdvertising = false;
-      BLEDevice::startAdvertising();
-      Serial.println("BLE advertising restarted");
-    }
-
-    BleSnapshot snapshot;
-    if (
-      bleUpdateQueue != nullptr &&
-      xQueueReceive(bleUpdateQueue, &snapshot, 0) == pdTRUE
-    ) {
-      applyBleSnapshot(snapshot);
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(20));
-  }
-}
-
-
-void makeBleSnapshot(BleSnapshot& snapshot, unsigned long now) {
-  snprintf(snapshot.sensorReading, sizeof(snapshot.sensorReading), "%d", lastRaw);
-  snprintf(snapshot.threshold, sizeof(snapshot.threshold), "%d", THRESHOLD);
-  snprintf(
-    snapshot.alertStatus,
-    sizeof(snapshot.alertStatus),
-    "%s",
-    alarmOn ? "WARNING" : "NORMAL"
-  );
-
-  if (readingCount > 0) {
-    snprintf(snapshot.maxReading, sizeof(snapshot.maxReading), "%d", maxReading);
-    snprintf(
-      snapshot.averageReading,
-      sizeof(snapshot.averageReading),
-      "%.1f",
-      (double)readingSum / readingCount
-    );
-  } else {
-    snprintf(snapshot.maxReading, sizeof(snapshot.maxReading), "N/A");
-    snprintf(snapshot.averageReading, sizeof(snapshot.averageReading), "N/A");
-  }
-
-  snprintf(snapshot.warningCount, sizeof(snapshot.warningCount), "%lu", (unsigned long)warningCount);
-  snprintf(
-    snapshot.warningDuration,
-    sizeof(snapshot.warningDuration),
-    "%llu",
-    (unsigned long long)warningDurationAt(now)
-  );
-}
-
-
-bool sameBleSnapshot(const BleSnapshot& left, const BleSnapshot& right) {
-  return strcmp(left.sensorReading, right.sensorReading) == 0 &&
-         strcmp(left.threshold, right.threshold) == 0 &&
-         strcmp(left.alertStatus, right.alertStatus) == 0 &&
-         strcmp(left.maxReading, right.maxReading) == 0 &&
-         strcmp(left.averageReading, right.averageReading) == 0 &&
-         strcmp(left.warningCount, right.warningCount) == 0 &&
-         strcmp(left.warningDuration, right.warningDuration) == 0;
-}
-
-
-void queueBleSnapshotIfChanged(unsigned long now) {
-  if (bleUpdateQueue == nullptr) {
-    return;
-  }
-
-  static BleSnapshot lastQueued = {};
-  static bool haveLastQueued = false;
-  BleSnapshot snapshot;
-  makeBleSnapshot(snapshot, now);
-
-  if (haveLastQueued && sameBleSnapshot(snapshot, lastQueued)) {
-    return;
-  }
-
-  if (xQueueOverwrite(bleUpdateQueue, &snapshot) == pdPASS) {
-    lastQueued = snapshot;
-    haveLastQueued = true;
-  }
-}
-
-
-void addBleCharacteristic(BLEService* service, const char* uuid, BLECharacteristic** target) {
-  *target = service->createCharacteristic(
-    uuid,
-    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
-  );
-  (*target)->addDescriptor(new BLE2902());
-}
-
-
-void initializeBle() {
-  BLEDevice::init(BLE_DEVICE_NAME);
-  bleServer = BLEDevice::createServer();
-  bleServer->setCallbacks(new GasLeakBleServerCallbacks());
-
-  // Seven characteristics plus seven CCCD descriptors need more than the
-  // BLE library's default attribute table size.
-  BLEService* service = bleServer->createService(BLEUUID(BLE_SERVICE_UUID), 40);
-  addBleCharacteristic(service, BLE_SENSOR_READING_UUID, &bleSensorReading);
-  addBleCharacteristic(service, BLE_THRESHOLD_UUID, &bleThreshold);
-  addBleCharacteristic(service, BLE_ALERT_STATUS_UUID, &bleAlertStatus);
-  addBleCharacteristic(service, BLE_MAX_READING_UUID, &bleMaxReading);
-  addBleCharacteristic(service, BLE_AVERAGE_READING_UUID, &bleAverageReading);
-  addBleCharacteristic(service, BLE_WARNING_COUNT_UUID, &bleWarningCount);
-  addBleCharacteristic(service, BLE_WARNING_DURATION_UUID, &bleWarningDuration);
-
-  BleSnapshot initialSnapshot;
-  makeBleSnapshot(initialSnapshot, millis());
-  applyBleSnapshot(initialSnapshot);
-
-  service->start();
-  BLEAdvertising* advertising = BLEDevice::getAdvertising();
-  advertising->addServiceUUID(BLE_SERVICE_UUID);
-  advertising->setScanResponse(true);
-
-  bleUpdateQueue = xQueueCreate(1, sizeof(BleSnapshot));
-  if (bleUpdateQueue == nullptr) {
-    Serial.println("BLE update queue allocation failed; characteristic updates unavailable");
-  } else {
-    BaseType_t taskCreated = xTaskCreatePinnedToCore(
-      bleWorkerTask,
-      "GasLeakBLE",
-      4096,
-      nullptr,
-      1,
-      nullptr,
-      0
-    );
-    if (taskCreated != pdPASS) {
-      vQueueDelete(bleUpdateQueue);
-      bleUpdateQueue = nullptr;
-      Serial.println("BLE worker task creation failed; characteristic updates unavailable");
-    }
-  }
-
-  BLEDevice::startAdvertising();
-  Serial.println("BLE initialized");
-  Serial.println("BLE advertising started");
-}
 
 
 // ===== SESSION ANALYTICS =====
@@ -773,10 +527,6 @@ void setup() {
 
   analogSetPinAttenuation(PIN_MQ2, ADC_11db);
 
-  // Start BLE before Wi-Fi connection attempts so the phone can discover the
-  // monitor even if the access point is unavailable.
-  initializeBle();
-
   connectWiFi(15000);
 
   showIP();
@@ -957,11 +707,6 @@ void loop() {
 
   // Accumulate an ongoing real warning even when no new sensor sample is due.
   accumulateWarningDuration(now);
-
-  // Send only changed values to the BLE worker; the worker owns GATT writes
-  // and notifications so the sensor sampling loop remains responsive.
-  queueBleSnapshotIfChanged(now);
-
 
   // ===== THINGSPEAK UPLOAD =====
 
