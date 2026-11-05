@@ -2,6 +2,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
+#include <stdint.h>
+#include <stdio.h>
 #include "secrets.h"
 
 // ===== 1. CONFIGURATION =====
@@ -36,13 +38,112 @@ bool alarmOn = false;
 bool simulate = false;
 bool warming = true;
 bool ipShown = false;
+bool realAlarmOn = false;
 
 int lastRaw = 0;
 int baseline = 0;
 
+// Session analytics reset on ESP32 reboot. Warm-up, calibration, and test-mode
+// samples are excluded from these real-sensor statistics.
+int maxReading = 0;
+uint64_t readingSum = 0;
+uint32_t readingCount = 0;
+uint32_t warningCount = 0;
+uint64_t warningDurationMs = 0;
+unsigned long warningLastTick = 0;
+int rollingReadings[10] = {0};
+uint8_t rollingIndex = 0;
+uint8_t rollingCount = 0;
+uint32_t rollingSum = 0;
+
 unsigned long lastRead = 0;
 unsigned long lastUpload = 0;
 unsigned long warmEnd = 0;
+
+
+// ===== SESSION ANALYTICS =====
+
+void accumulateWarningDuration(unsigned long now) {
+
+  if (realAlarmOn) {
+
+    // Unsigned subtraction remains correct across millis() rollover because
+    // this function runs continuously in loop().
+    warningDurationMs += (unsigned long)(now - warningLastTick);
+    warningLastTick = now;
+  }
+}
+
+
+uint64_t warningDurationAt(unsigned long now) {
+
+  uint64_t duration = warningDurationMs;
+
+  if (realAlarmOn) {
+
+    duration += (unsigned long)(now - warningLastTick);
+  }
+
+  return duration / 1000ULL;
+}
+
+
+String uint64ToString(uint64_t value) {
+
+  char buffer[21];
+  snprintf(buffer, sizeof(buffer), "%llu", (unsigned long long)value);
+  return String(buffer);
+}
+
+
+void addRealReading(int reading, unsigned long now) {
+
+  if (reading < 0 || reading > 4095) {
+    return;
+  }
+
+  if (readingCount == 0 || reading > maxReading) {
+    maxReading = reading;
+  }
+
+  readingSum += (uint64_t)reading;
+  readingCount++;
+
+  if (rollingCount == 10) {
+    rollingSum -= rollingReadings[rollingIndex];
+  } else {
+    rollingCount++;
+  }
+
+  rollingReadings[rollingIndex] = reading;
+  rollingSum += (uint32_t)reading;
+  rollingIndex = (rollingIndex + 1) % 10;
+
+  bool nextRealAlarm = realAlarmOn;
+
+  if (!realAlarmOn && reading >= THRESHOLD) {
+    nextRealAlarm = true;
+  } else if (
+    realAlarmOn &&
+    reading < (THRESHOLD - HYSTERESIS)
+  ) {
+    nextRealAlarm = false;
+  }
+
+  if (nextRealAlarm != realAlarmOn) {
+
+    // Close the prior interval before changing state. Count only a real
+    // normal-to-warning transition; simulation never calls this function.
+    accumulateWarningDuration(now);
+
+    if (nextRealAlarm) {
+      warningCount++;
+      warningLastTick = now;
+    }
+
+    realAlarmOn = nextRealAlarm;
+  }
+}
 
 
 // ===== 5. READ MQ-2 =====
@@ -111,7 +212,7 @@ void showIP() {
 
 // ===== 8. UPLOAD TO THINGSPEAK =====
 
-void uploadToThingSpeak(int raw, bool alert) {
+void uploadToThingSpeak(int raw, unsigned long now) {
 
   if (WiFi.status() != WL_CONNECTED) {
 
@@ -126,8 +227,13 @@ void uploadToThingSpeak(int raw, bool alert) {
     String("http://api.thingspeak.com/update?api_key=") +
     TS_API_KEY +
     "&field1=" + raw +
-    "&field2=" + (alert ? 1 : 0) +
-    "&field3=" + THRESHOLD;
+    "&field2=" + (realAlarmOn ? 1 : 0) +
+    "&field3=" + THRESHOLD +
+    "&field4=" + (readingCount ? String(maxReading) : String("")) +
+    "&field5=" + (readingCount ? String((double)readingSum / readingCount, 1) : String("")) +
+    "&field6=" + warningCount +
+    "&field7=" + uint64ToString(warningDurationAt(now)) +
+    "&field8=" + (rollingCount ? String((double)rollingSum / rollingCount, 1) : String(""));
 
   http.begin(url);
 
@@ -194,6 +300,15 @@ void handleData() {
     left = 0;
   }
 
+  unsigned long now = millis();
+  String maxJson = readingCount ? String(maxReading) : String("null");
+  String averageJson = readingCount
+    ? String((double)readingSum / readingCount, 1)
+    : String("null");
+  String rollingJson = rollingCount
+    ? String((double)rollingSum / rollingCount, 1)
+    : String("null");
+
   String j =
     "{\"raw\":" + String(lastRaw) +
     ",\"threshold\":" + String(THRESHOLD) +
@@ -201,6 +316,11 @@ void handleData() {
     ",\"warming\":" + (warming ? "true" : "false") +
     ",\"left\":" + String(left) +
     ",\"sim\":" + (simulate ? "true" : "false") +
+    ",\"maxReading\":" + maxJson +
+    ",\"averageReading\":" + averageJson +
+    ",\"warningCount\":" + String(warningCount) +
+    ",\"warningDuration\":" + uint64ToString(warningDurationAt(now)) +
+    ",\"rollingAverage\":" + rollingJson +
     "}";
 
   server.sendHeader("Cache-Control", "no-store");
@@ -328,6 +448,11 @@ void loop() {
 
     // Test mode exercises the alarm without replacing the live sensor reading.
     lastRaw = readMQ2();
+    bool validRealReading =
+      !warming &&
+      !simulate &&
+      lastRaw >= 0 &&
+      lastRaw <= 4095;
 
 
     // Finish warm-up and calibrate
@@ -344,34 +469,14 @@ void loop() {
 
     bool wasAlarm = alarmOn;
 
-    if (simulate) {
-      alarmOn = true;
-
-    } else if (warming) {
-
-      alarmOn = false;
-
-    } else {
-
-      // Activate immediately when threshold is crossed
-
-      if (!alarmOn && lastRaw >= THRESHOLD) {
-
-        alarmOn = true;
-
-      }
-
-      // Clear only after falling below threshold
-      // minus hysteresis
-
-      else if (
-        alarmOn &&
-        lastRaw < (THRESHOLD - HYSTERESIS)
-      ) {
-
-        alarmOn = false;
-      }
+    if (validRealReading) {
+      addRealReading(lastRaw, now);
     }
+
+    // Keep simulated alarm state separate from the real sensor alarm state.
+    // This preserves the live raw reading and keeps simulated transitions out
+    // of session analytics and ThingSpeak's real alert field.
+    alarmOn = simulate || realAlarmOn;
 
 
     // ===== ALERT STATUS MESSAGE =====
@@ -403,6 +508,9 @@ void loop() {
     );
   }
 
+  // Accumulate an ongoing real warning even when no new sensor sample is due.
+  accumulateWarningDuration(now);
+
 
   // ===== THINGSPEAK UPLOAD =====
 
@@ -415,6 +523,10 @@ void loop() {
       WiFi.reconnect();
     }
 
-    uploadToThingSpeak(lastRaw, alarmOn);
+    if (!simulate && readingCount > 0) {
+      uploadToThingSpeak(lastRaw, now);
+    } else if (simulate) {
+      Serial.println("ThingSpeak upload skipped: test mode is active");
+    }
   }
 }

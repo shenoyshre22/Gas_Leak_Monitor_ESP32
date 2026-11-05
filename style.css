@@ -3,3 +3,16 @@
 @media(max-width:760px){.shell{width:calc(100% - 28px);padding-top:17px}.topbar{gap:12px;flex-wrap:wrap}.brand{min-width:100%}.connection{padding:0 12px 0 0;border-left:0;min-width:0;flex:1}.updated{min-width:110px}.endpoint-hint{display:none}.status-panel{padding:18px;min-height:125px}.status-copy h1{font-size:22px}.status-side{min-width:120px;padding-left:14px}.content-grid{grid-template-columns:1fr}.telemetry-panel,.indicators-panel{min-height:unset}.controls-panel{padding:15px}.control-row{flex-wrap:wrap}.control-description{min-width:calc(50% - 10px)}.control-divider{display:none}.button-test{margin-left:0}.footer{gap:14px;align-items:flex-start;flex-direction:column}.footer div{gap:12px;flex-wrap:wrap}}
 @media(max-width:430px){.brand strong{font-size:12px}.status-panel{align-items:flex-start;gap:12px;padding:15px}.status-icon{width:39px;height:39px}.status-copy h1{font-size:19px}.status-copy p{font-size:10px;line-height:1.5}.status-side{min-width:88px;padding-left:10px}.status-label{font-size:7px}.status-side strong{font-size:10px}.reading-value strong{font-size:37px}.telemetry-panel,.indicators-panel{padding:16px}.control-description{min-width:calc(50% - 10px)}.endpoint-bar{gap:7px}.endpoint-bar label{font-size:10px}.endpoint-bar input{width:130px;font-size:10px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
+
+.trend-row{display:flex;align-items:center;gap:8px;margin-top:11px;color:#91a0b3;font-size:10px}
+.trend-row strong{font:500 11px var(--mono);color:#a9d8c0}
+.trend-row span:last-child{font-size:9px;color:#74849a}
+.analytics-panel{padding:18px 20px;margin-bottom:15px}
+.analytics-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:14px}
+.analytics-card{min-height:83px;padding:12px;border:1px solid #26364b;border-radius:7px;background:#0f1928}
+.analytics-card .metric-label{font-size:8px}
+.analytics-card strong{display:block;margin-top:8px;font:500 20px var(--mono);letter-spacing:-.04em;color:#e5edf6}
+.analytics-card>span:last-child{display:block;margin-top:4px;font-size:9px;color:#7889a0}
+.analytics-note{margin:11px 0 0;color:#75869c;font-size:9px}
+@media(max-width:760px){.analytics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:430px){.analytics-panel{padding:16px}.analytics-card{padding:10px}.analytics-card strong{font-size:18px}.trend-row{flex-wrap:wrap}}

@@ -11,6 +11,9 @@
     message: byId('statusMessage'), mode: byId('operatingMode'), warmup: byId('warmupState'),
     reading: byId('readingValue'), threshold: byId('thresholdValue'), delta: byId('deltaValue'), gauge: byId('gauge'),
     fill: byId('gaugeFill'), marker: byId('thresholdMarker'), gaugeThreshold: byId('gaugeThreshold'),
+    rollingAverage: byId('rollingAverageValue'), maxReading: byId('maxReadingValue'),
+    averageReading: byId('averageReadingValue'), warningCount: byId('warningCountValue'),
+    warningDuration: byId('warningDurationValue'),
     green: byId('greenIndicator'), red: byId('redIndicator'), buzzer: byId('buzzerIndicator'),
     greenState: byId('greenState'), redState: byId('redState'), buzzerState: byId('buzzerState'),
     sound: byId('soundToggle'), soundState: byId('soundState'), test: byId('testButton'), testState: byId('testState')
@@ -39,6 +42,16 @@
     return parsed.origin;
   }
 
+  function formatMetric(value, decimals = 0) {
+    if (value === null || value === undefined || value === '') return '—';
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '—';
+    return number.toLocaleString(undefined, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    });
+  }
+
   function setConnection(connected, detail) {
     ui.connection.classList.toggle('online', connected);
     ui.connection.classList.toggle('offline', !connected);
@@ -59,6 +72,11 @@
     ui.threshold.textContent = '—';
     ui.delta.textContent = '—';
     ui.gaugeThreshold.textContent = '—';
+    ui.rollingAverage.textContent = '—';
+    ui.maxReading.textContent = '—';
+    ui.averageReading.textContent = '—';
+    ui.warningCount.textContent = '0';
+    ui.warningDuration.textContent = '0 s';
     ui.fill.style.width = '0%';
     ui.marker.style.left = '0%';
     ui.gauge.setAttribute('aria-valuenow', '0');
@@ -100,6 +118,12 @@
     ui.delta.textContent = `${difference > 0 ? '+' : ''}${difference} counts`;
     ui.delta.style.color = alert ? 'var(--red)' : '';
     ui.gaugeThreshold.textContent = String(threshold);
+    ui.maxReading.textContent = formatMetric(data.maxReading);
+    ui.averageReading.textContent = formatMetric(data.averageReading, 1);
+    ui.warningCount.textContent = formatMetric(data.warningCount);
+    const duration = formatMetric(data.warningDuration);
+    ui.warningDuration.textContent = duration === '—' ? '—' : `${duration} s`;
+    ui.rollingAverage.textContent = formatMetric(data.rollingAverage, 1);
     ui.fill.style.width = `${percent}%`;
     ui.marker.style.left = `${thresholdPercent}%`;
     ui.gauge.classList.toggle('warning', alert);

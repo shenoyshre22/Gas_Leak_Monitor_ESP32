@@ -44,6 +44,7 @@
         <div class="panel-heading"><div><span class="eyebrow">LIVE TELEMETRY</span><h2>Sensor readings</h2></div><span class="live-tag"><i></i> LIVE</span></div>
         <div class="reading-row"><div><span class="metric-label">MQ-2 RAW READING</span><div class="reading-value"><strong id="readingValue">—</strong><span>ADC counts</span></div></div><div class="threshold-tile"><span class="metric-label">CONFIGURED THRESHOLD</span><strong id="thresholdValue">—</strong><span>ADC counts</span></div></div>
         <div class="delta-row"><span>Difference from threshold</span><strong id="deltaValue">—</strong></div>
+        <div class="trend-row"><span>10-reading rolling average</span><strong id="rollingAverageValue">—</strong><span>ADC counts</span></div>
         <div class="gauge-wrap"><div class="gauge" id="gauge" role="meter" aria-label="MQ-2 raw reading" aria-valuemin="0" aria-valuemax="4095" aria-valuenow="0"><div class="gauge-fill" id="gaugeFill"></div><div class="threshold-marker" id="thresholdMarker"></div></div><div class="gauge-labels"><span>0</span><span>Threshold <b id="gaugeThreshold">—</b></span><span>4095</span></div></div>
         <p class="telemetry-note">Raw analog-to-digital converter counts · MQ-2 sensor</p>
       </section>
@@ -58,6 +59,17 @@
         <div class="hardware-note"><span class="note-icon">i</span> LEDs reflect the sensor alert state. Audible alarm is simulated in this browser.</div>
       </section>
     </div>
+
+    <section class="panel analytics-panel">
+      <div class="panel-heading"><div><span class="eyebrow">SESSION ANALYTICS</span><h2>Real sensor history</h2></div><span class="panel-code">SINCE DEVICE BOOT</span></div>
+      <div class="analytics-grid">
+        <article class="analytics-card"><span class="metric-label">MAXIMUM READING</span><strong id="maxReadingValue">—</strong><span>ADC counts</span></article>
+        <article class="analytics-card"><span class="metric-label">AVERAGE READING</span><strong id="averageReadingValue">—</strong><span>ADC counts</span></article>
+        <article class="analytics-card"><span class="metric-label">WARNING EVENTS</span><strong id="warningCountValue">0</strong><span>normal-to-warning transitions</span></article>
+        <article class="analytics-card"><span class="metric-label">WARNING DURATION</span><strong id="warningDurationValue">0 s</strong><span>cumulative real warning time</span></article>
+      </div>
+      <p class="analytics-note">Warm-up, calibration and test-mode samples are excluded. Values reset when the ESP32 reboots.</p>
+    </section>
 
     <section class="panel controls-panel">
       <div class="panel-heading controls-heading"><div><span class="eyebrow">OPERATOR CONTROLS</span><h2>Alarm controls</h2></div><span class="control-note">Test mode changes the ESP32 simulation state.</span></div>
