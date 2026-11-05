@@ -326,9 +326,8 @@ void loop() {
 
     lastRead = now;
 
-    lastRaw = simulate
-      ? THRESHOLD + 500
-      : readMQ2();
+    // Test mode exercises the alarm without replacing the live sensor reading.
+    lastRaw = readMQ2();
 
 
     // Finish warm-up and calibrate
@@ -345,7 +344,10 @@ void loop() {
 
     bool wasAlarm = alarmOn;
 
-    if (warming && !simulate) {
+    if (simulate) {
+      alarmOn = true;
+
+    } else if (warming) {
 
       alarmOn = false;
 

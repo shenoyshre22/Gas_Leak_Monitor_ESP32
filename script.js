@@ -19,7 +19,11 @@
   let baseUrl = '';
   let soundEnabled = false;
   let audioContext = null;
-  let toneTimer = null;
+  let sirenMaster = null;
+  let sirenOscillators = [];
+  let sirenScheduler = null;
+  let sirenActive = false;
+  let sirenHighTone = false;
   let latestData = null;
   let polling = false;
 
@@ -65,7 +69,7 @@
     ui.redState.textContent = 'OFF';
     ui.buzzerState.textContent = 'INACTIVE';
     latestData = null;
-    stopTone();
+    syncSiren();
   }
 
   function render(data) {
@@ -130,37 +134,116 @@
     }
   }
 
-  function startTone() {
-    if (!audioContext) {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) return;
-      audioContext = new AudioContextClass();
+  function ensureSirenEngine() {
+    if (audioContext) return true;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      ui.network.textContent = 'This browser does not support Web Audio.';
+      return false;
     }
-    if (audioContext.state === 'suspended') audioContext.resume();
-    const oscillator = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-    oscillator.type = 'sine';
-    oscillator.frequency.value = 880;
-    gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.045, audioContext.currentTime + 0.025);
-    gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.24);
-    oscillator.connect(gain);
-    gain.connect(audioContext.destination);
-    oscillator.start();
-    oscillator.stop(audioContext.currentTime + 0.25);
+
+    try {
+      audioContext = new AudioContextClass();
+      const compressor = audioContext.createDynamicsCompressor();
+      compressor.threshold.setValueAtTime(-8, audioContext.currentTime);
+      compressor.knee.setValueAtTime(6, audioContext.currentTime);
+      compressor.ratio.setValueAtTime(12, audioContext.currentTime);
+      compressor.attack.setValueAtTime(0.004, audioContext.currentTime);
+      compressor.release.setValueAtTime(0.12, audioContext.currentTime);
+
+      sirenMaster = audioContext.createGain();
+      sirenMaster.gain.setValueAtTime(0.0001, audioContext.currentTime);
+      sirenMaster.connect(compressor);
+      compressor.connect(audioContext.destination);
+
+      // Keep one pair of oscillators alive and muted between alarms. Polling only
+      // changes the master gain; it never creates more oscillators.
+      const fundamentalGain = audioContext.createGain();
+      fundamentalGain.gain.setValueAtTime(0.72, audioContext.currentTime);
+      const harmonicGain = audioContext.createGain();
+      harmonicGain.gain.setValueAtTime(0.12, audioContext.currentTime);
+
+      const fundamental = audioContext.createOscillator();
+      fundamental.type = 'sawtooth';
+      fundamental.frequency.setValueAtTime(520, audioContext.currentTime);
+      fundamental.connect(fundamentalGain);
+      fundamentalGain.connect(sirenMaster);
+      fundamental.start();
+
+      const harmonic = audioContext.createOscillator();
+      harmonic.type = 'square';
+      harmonic.frequency.setValueAtTime(1040, audioContext.currentTime);
+      harmonic.connect(harmonicGain);
+      harmonicGain.connect(sirenMaster);
+      harmonic.start();
+
+      sirenOscillators = [fundamental, harmonic];
+      audioContext.addEventListener('statechange', () => {
+        if (audioContext.state === 'running') syncSiren();
+      });
+      return true;
+    } catch (error) {
+      audioContext = null;
+      sirenMaster = null;
+      sirenOscillators = [];
+      ui.network.textContent = `Unable to initialize browser audio: ${error.message}`;
+      return false;
+    }
   }
 
-  function stopTone() {
-    if (toneTimer) window.clearInterval(toneTimer);
-    toneTimer = null;
+  function setSirenLevel(level) {
+    if (!audioContext || !sirenMaster) return;
+    const now = audioContext.currentTime;
+    const parameter = sirenMaster.gain;
+    parameter.cancelScheduledValues(now);
+    parameter.setTargetAtTime(level, now, level > 0.001 ? 0.035 : 0.012);
   }
 
-  function syncTone() {
-    const shouldSound = soundEnabled && latestData && latestData.alert;
-    if (shouldSound && !toneTimer) {
-      startTone();
-      toneTimer = window.setInterval(startTone, 850);
-    } else if (!shouldSound) stopTone();
+  function setSirenPitch(high) {
+    if (!audioContext || sirenOscillators.length !== 2) return;
+    const now = audioContext.currentTime;
+    const baseHz = high ? 880 : 520;
+    sirenOscillators[0].frequency.cancelScheduledValues(now);
+    sirenOscillators[0].frequency.setTargetAtTime(baseHz, now, 0.025);
+    sirenOscillators[1].frequency.cancelScheduledValues(now);
+    sirenOscillators[1].frequency.setTargetAtTime(baseHz * 2, now, 0.025);
+  }
+
+  function activateAudioFromGesture() {
+    if (!ensureSirenEngine()) return;
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().then(() => {
+        syncSiren();
+      }).catch(() => {
+        ui.network.textContent = 'Audio is paused by the browser. Use the Sound control to resume it.';
+      });
+    }
+  }
+
+  function startSiren() {
+    if (sirenActive || !audioContext || audioContext.state !== 'running') return;
+    sirenActive = true;
+    sirenHighTone = false;
+    setSirenPitch(sirenHighTone);
+    setSirenLevel(0.58);
+    sirenScheduler = window.setInterval(() => {
+      if (!sirenActive || !audioContext || audioContext.state !== 'running') return;
+      sirenHighTone = !sirenHighTone;
+      setSirenPitch(sirenHighTone);
+    }, 420);
+  }
+
+  function stopSiren() {
+    if (sirenScheduler) window.clearInterval(sirenScheduler);
+    sirenScheduler = null;
+    sirenActive = false;
+    setSirenLevel(0.0001);
+  }
+
+  function syncSiren() {
+    const warningActive = Boolean(latestData && latestData.alert);
+    if (soundEnabled && warningActive) startSiren();
+    else stopSiren();
   }
 
   function connect() {
@@ -181,10 +264,12 @@
     soundEnabled = !soundEnabled;
     ui.sound.setAttribute('aria-checked', String(soundEnabled));
     ui.soundState.textContent = soundEnabled ? 'ENABLED' : 'MUTED';
-    syncTone();
+    if (soundEnabled) activateAudioFromGesture();
+    syncSiren();
   });
   ui.test.addEventListener('click', async () => {
     if (!baseUrl) return;
+    activateAudioFromGesture();
     const nextState = ui.test.getAttribute('aria-pressed') !== 'true';
     ui.test.disabled = true;
     try {
