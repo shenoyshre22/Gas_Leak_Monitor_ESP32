@@ -1,0 +1,16 @@
+# Private credentials
+secrets.h
+
+# Arduino build files
+build/
+*.elf
+*.bin
+*.hex
+
+# Editor files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
