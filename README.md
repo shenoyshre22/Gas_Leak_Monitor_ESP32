@@ -74,7 +74,6 @@ The following screenshot showcases the ThingSpeak dashboard, displaying real-tim
 GasLeakMonitor/
 ├── GasLeakMonitor.ino
 ├── secrets.h
-├── secrets.example.h
 ├── .gitignore
 ├── index.html
 ├── style.css
