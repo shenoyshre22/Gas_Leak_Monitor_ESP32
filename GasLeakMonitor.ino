@@ -30,7 +30,7 @@ const unsigned long UPLOAD_MS = 20000;
 
 // Safe initial mode: existing HTTP upload stays enabled until MQTT is verified.
 // To switch to MQTT-only later, set MQTT true and HTTP false.
-const bool ENABLE_MQTT_PUBLISHING = false;
+const bool ENABLE_MQTT_PUBLISHING = true;
 const bool ENABLE_HTTP_PUBLISHING = true;
 
 const char* MQTT_BROKER = "mqtt3.thingspeak.com";
