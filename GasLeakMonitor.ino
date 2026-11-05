@@ -2,6 +2,10 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
+#include <PubSubClient.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include <stdint.h>
 #include <stdio.h>
 #include "secrets.h"
@@ -24,6 +28,16 @@ const unsigned long WARMUP_MS = 180000UL;
 const unsigned long READ_MS = 1000;
 const unsigned long UPLOAD_MS = 20000;
 
+// Safe initial mode: existing HTTP upload stays enabled until MQTT is verified.
+// To switch to MQTT-only later, set MQTT true and HTTP false.
+const bool ENABLE_MQTT_PUBLISHING = false;
+const bool ENABLE_HTTP_PUBLISHING = true;
+
+const char* MQTT_BROKER = "mqtt3.thingspeak.com";
+const uint16_t MQTT_PORT = 1883;
+const char* MQTT_TOPIC = "channels/3566022/publish";
+const unsigned long MQTT_RETRY_MS = 5000UL;
+
 // ===== 2. SENSOR PIN =====
 
 const int PIN_MQ2 = 34;
@@ -31,6 +45,18 @@ const int PIN_MQ2 = 34;
 // ===== 3. WEB SERVER =====
 
 WebServer server(80);
+
+// MQTT networking runs in its own FreeRTOS task so a slow broker connection
+// cannot hold up sensor sampling in loop().
+WiFiClient mqttNetworkClient;
+PubSubClient mqttClient(mqttNetworkClient);
+
+struct MqttPublishMessage {
+  char payload[192];
+};
+
+QueueHandle_t mqttPublishQueue = nullptr;
+volatile bool mqttConnected = false;
 
 // ===== 4. VARIABLES =====
 
@@ -212,6 +238,38 @@ void showIP() {
 
 // ===== 8. UPLOAD TO THINGSPEAK =====
 
+bool buildThingSpeakPayload(
+  char* payload,
+  size_t payloadSize,
+  int raw,
+  unsigned long now
+) {
+
+  double average = readingCount
+    ? (double)readingSum / readingCount
+    : 0.0;
+  double rollingAverage = rollingCount
+    ? (double)rollingSum / rollingCount
+    : 0.0;
+
+  int length = snprintf(
+    payload,
+    payloadSize,
+    "field1=%d&field2=%d&field3=%d&field4=%d&field5=%.1f&field6=%lu&field7=%llu&field8=%.1f",
+    raw,
+    realAlarmOn ? 1 : 0,
+    THRESHOLD,
+    maxReading,
+    average,
+    (unsigned long)warningCount,
+    (unsigned long long)warningDurationAt(now),
+    rollingAverage
+  );
+
+  return length > 0 && (size_t)length < payloadSize;
+}
+
+
 void uploadToThingSpeak(int raw, unsigned long now) {
 
   if (WiFi.status() != WL_CONNECTED) {
@@ -223,17 +281,16 @@ void uploadToThingSpeak(int raw, unsigned long now) {
 
   HTTPClient http;
 
+  char payload[192];
+  if (!buildThingSpeakPayload(payload, sizeof(payload), raw, now)) {
+    Serial.println("ThingSpeak HTTP payload build failed");
+    return;
+  }
+
   String url =
     String("http://api.thingspeak.com/update?api_key=") +
     TS_API_KEY +
-    "&field1=" + raw +
-    "&field2=" + (realAlarmOn ? 1 : 0) +
-    "&field3=" + THRESHOLD +
-    "&field4=" + (readingCount ? String(maxReading) : String("")) +
-    "&field5=" + (readingCount ? String((double)readingSum / readingCount, 1) : String("")) +
-    "&field6=" + warningCount +
-    "&field7=" + uint64ToString(warningDurationAt(now)) +
-    "&field8=" + (rollingCount ? String((double)rollingSum / rollingCount, 1) : String(""));
+    "&" + payload;
 
   http.begin(url);
 
@@ -248,6 +305,110 @@ void uploadToThingSpeak(int raw, unsigned long now) {
   );
 
   http.end();
+}
+
+
+void queueThingSpeakMqttPublish(int raw, unsigned long now) {
+
+  if (mqttPublishQueue == nullptr) {
+    Serial.println("MQTT publish skipped: queue unavailable");
+    return;
+  }
+
+  MqttPublishMessage message;
+  if (!buildThingSpeakPayload(
+        message.payload,
+        sizeof(message.payload),
+        raw,
+        now
+      )) {
+    Serial.println("MQTT payload build failed");
+    return;
+  }
+
+  // Queue depth is one: when offline, retain only the newest scheduled sample.
+  xQueueOverwrite(mqttPublishQueue, &message);
+}
+
+
+void mqttWorkerTask(void* parameter) {
+
+  (void)parameter;
+  unsigned long lastAttempt = 0;
+  bool hadConnection = false;
+
+  for (;;) {
+
+    if (WiFi.status() != WL_CONNECTED) {
+
+      if (mqttClient.connected()) {
+        mqttClient.disconnect();
+      }
+
+      mqttConnected = false;
+      if (hadConnection) {
+        Serial.println("MQTT disconnected: Wi-Fi unavailable");
+        hadConnection = false;
+      }
+
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+
+    if (!mqttClient.connected()) {
+
+      mqttConnected = false;
+      unsigned long now = millis();
+
+      if ((unsigned long)(now - lastAttempt) >= MQTT_RETRY_MS) {
+
+        lastAttempt = now;
+        Serial.println("MQTT: connecting to ThingSpeak...");
+
+        if (mqttClient.connect(
+              SECRET_MQTT_CLIENT_ID,
+              SECRET_MQTT_USERNAME,
+              SECRET_MQTT_PASSWORD
+            )) {
+          mqttConnected = true;
+          hadConnection = true;
+          Serial.println("MQTT connected to ThingSpeak");
+        } else {
+          Serial.printf(
+            "MQTT connection failed, state=%d; retrying in %lu ms\n",
+            mqttClient.state(),
+            MQTT_RETRY_MS
+          );
+        }
+      }
+    } else {
+
+      mqttConnected = true;
+      mqttClient.loop();
+
+      if (!mqttClient.connected()) {
+        mqttConnected = false;
+        hadConnection = false;
+        Serial.println("MQTT connection lost");
+      } else if (mqttPublishQueue != nullptr) {
+
+        MqttPublishMessage message;
+        if (xQueueReceive(mqttPublishQueue, &message, 0) == pdTRUE) {
+
+          if (mqttClient.publish(MQTT_TOPIC, message.payload)) {
+            Serial.printf("MQTT publish sent to ThingSpeak: %s\n", message.payload);
+          } else {
+            Serial.printf(
+              "MQTT publish failed, state=%d (no HTTP retry for this sample)\n",
+              mqttClient.state()
+            );
+          }
+        }
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
 }
 
 
@@ -397,6 +558,42 @@ void setup() {
 
   server.begin();
 
+  if (ENABLE_MQTT_PUBLISHING) {
+
+    mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+    mqttClient.setKeepAlive(30);
+    mqttClient.setSocketTimeout(2);
+
+    mqttPublishQueue = xQueueCreate(1, sizeof(MqttPublishMessage));
+    if (mqttPublishQueue == nullptr) {
+      Serial.println("MQTT disabled at runtime: queue allocation failed");
+    } else {
+      BaseType_t taskCreated = xTaskCreatePinnedToCore(
+        mqttWorkerTask,
+        "ThingSpeakMQTT",
+        4096,
+        nullptr,
+        1,
+        nullptr,
+        0
+      );
+
+      if (taskCreated != pdPASS) {
+        vQueueDelete(mqttPublishQueue);
+        mqttPublishQueue = nullptr;
+        Serial.println("MQTT disabled at runtime: worker task creation failed");
+      } else {
+        Serial.println("MQTT publisher task started on core 0");
+      }
+    }
+  } else {
+    Serial.println("MQTT publishing disabled; HTTP publishing remains selected");
+  }
+
+  if (!ENABLE_HTTP_PUBLISHING && !ENABLE_MQTT_PUBLISHING) {
+    Serial.println("WARNING: both ThingSpeak publishing methods are disabled");
+  }
+
   warmEnd = millis() + WARMUP_MS;
 
   Serial.println("Web server started.");
@@ -524,7 +721,27 @@ void loop() {
     }
 
     if (!simulate && readingCount > 0) {
-      uploadToThingSpeak(lastRaw, now);
+
+      if (
+        ENABLE_MQTT_PUBLISHING &&
+        mqttConnected &&
+        mqttPublishQueue != nullptr
+      ) {
+        queueThingSpeakMqttPublish(lastRaw, now);
+
+      } else if (ENABLE_HTTP_PUBLISHING) {
+
+        // Discard stale offline MQTT data before HTTP fallback so the same
+        // scheduled sample cannot later be sent through both transports.
+        if (mqttPublishQueue != nullptr) {
+          xQueueReset(mqttPublishQueue);
+        }
+
+        uploadToThingSpeak(lastRaw, now);
+
+      } else {
+        Serial.println("ThingSpeak upload skipped: MQTT is not connected");
+      }
     } else if (simulate) {
       Serial.println("ThingSpeak upload skipped: test mode is active");
     }

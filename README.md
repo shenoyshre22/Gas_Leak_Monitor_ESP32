@@ -61,12 +61,30 @@ The following screenshot showcases the ThingSpeak dashboard, displaying real-tim
 
 ## Setup and Execution
 
-1. Configure Wi-Fi credentials and ThingSpeak API key in the local `secrets.h` file.
-2. Open `GasLeakMonitor.ino` in Arduino IDE.
-3. Select the ESP32 board and COM port, then upload the firmware.
-4. Allow the MQ-2 sensor to warm up and complete baseline calibration.
-5. Open `index.html` using VS Code Live Server.
-6. Connect the dashboard to the ESP32 using its IP address.
+1. Copy `secrets.example.h` to `secrets.h` and enter the local Wi-Fi and ThingSpeak credentials. `secrets.h` is ignored by Git.
+2. In Arduino IDE Library Manager, install **PubSubClient** by Nick O'Leary.
+3. Open `GasLeakMonitor.ino` in Arduino IDE.
+4. Select the ESP32 board and COM port, then upload the firmware.
+5. Allow the MQ-2 sensor to warm up and complete baseline calibration.
+6. Open `index.html` using VS Code Live Server.
+7. Connect the dashboard to the ESP32 using its IP address.
+
+## ThingSpeak MQTT Publishing
+
+The firmware supports the ThingSpeak MQTT broker at `mqtt3.thingspeak.com:1883` and publishes to channel `3566022` using the topic `channels/3566022/publish`. It sends the eight channel fields in the same order as the HTTP upload: raw reading, real alert, threshold, maximum, session average, warning count, warning duration in seconds, and 10-reading average.
+
+Publishing defaults in `GasLeakMonitor.ino` are deliberately safe:
+
+```cpp
+const bool ENABLE_MQTT_PUBLISHING = false;
+const bool ENABLE_HTTP_PUBLISHING = true;
+```
+
+The existing HTTP path therefore remains active until MQTT is selected. To test MQTT while retaining the HTTP fallback, set `ENABLE_MQTT_PUBLISHING` to `true` and leave `ENABLE_HTTP_PUBLISHING` as `true`. At each 20-second update, the firmware uses MQTT if connected; otherwise it uses HTTP. It does not send the same scheduled sample over both transports. If an MQTT publish attempt fails after connection, that sample is logged and is not retried through HTTP to avoid a possible duplicate entry.
+
+For MQTT-only operation, first confirm repeated `MQTT connected to ThingSpeak` and `MQTT publish sent to ThingSpeak` messages in Serial Monitor and verify new entries in channel 3566022. Then set both `ENABLE_MQTT_PUBLISHING` to `true` and `ENABLE_HTTP_PUBLISHING` to `false`, upload again, and monitor the MQTT status messages. If MQTT is unavailable in this mode, cloud updates pause while local sensor monitoring and the dashboard continue.
+
+MQTT client ID, username and password belong to the ThingSpeak MQTT device credentials. Enter them only in the local, Git-ignored `secrets.h`; do not place them in dashboard files or commit them. Enable channel Fields 1 through 8 in ThingSpeak to view all values.
 
 ## Repository Structure
 
@@ -74,6 +92,7 @@ The following screenshot showcases the ThingSpeak dashboard, displaying real-tim
 GasLeakMonitor/
 ├── GasLeakMonitor.ino
 ├── secrets.h
+├── secrets.example.h
 ├── .gitignore
 ├── index.html
 ├── style.css
