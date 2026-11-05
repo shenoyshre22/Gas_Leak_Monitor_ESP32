@@ -8,6 +8,7 @@
 #include <freertos/task.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include "secrets.h"
 
 // ===== 1. CONFIGURATION =====
@@ -57,6 +58,41 @@ struct MqttPublishMessage {
 
 QueueHandle_t mqttPublishQueue = nullptr;
 volatile bool mqttConnected = false;
+
+bool mqttCredentialConfigured(const char* value) {
+
+  return value != nullptr &&
+         value[0] != '\0' &&
+         strncmp(value, "YOUR_", 5) != 0;
+}
+
+const char* mqttStateExplanation(int state) {
+
+  switch (state) {
+    case -4:
+      return "Connection timeout";
+    case -3:
+      return "Connection lost";
+    case -2:
+      return "Failed to connect to broker";
+    case -1:
+      return "Disconnected";
+    case 0:
+      return "Connected";
+    case 1:
+      return "Incorrect MQTT protocol";
+    case 2:
+      return "Incorrect client ID";
+    case 3:
+      return "Broker unavailable";
+    case 4:
+      return "Bad username or password";
+    case 5:
+      return "Unauthorized";
+    default:
+      return "Unknown PubSubClient state";
+  }
+}
 
 // ===== 4. VARIABLES =====
 
@@ -336,6 +372,13 @@ void mqttWorkerTask(void* parameter) {
   (void)parameter;
   unsigned long lastAttempt = 0;
   bool hadConnection = false;
+  bool reportedWifiWait = false;
+
+  Serial.printf(
+    "MQTT worker task entered on core %d; Wi-Fi status=%d\n",
+    xPortGetCoreID(),
+    WiFi.status()
+  );
 
   for (;;) {
 
@@ -346,6 +389,13 @@ void mqttWorkerTask(void* parameter) {
       }
 
       mqttConnected = false;
+      if (!reportedWifiWait) {
+        Serial.printf(
+          "MQTT worker waiting for Wi-Fi; status=%d\n",
+          WiFi.status()
+        );
+        reportedWifiWait = true;
+      }
       if (hadConnection) {
         Serial.println("MQTT disconnected: Wi-Fi unavailable");
         hadConnection = false;
@@ -355,6 +405,8 @@ void mqttWorkerTask(void* parameter) {
       continue;
     }
 
+    reportedWifiWait = false;
+
     if (!mqttClient.connected()) {
 
       mqttConnected = false;
@@ -363,20 +415,39 @@ void mqttWorkerTask(void* parameter) {
       if ((unsigned long)(now - lastAttempt) >= MQTT_RETRY_MS) {
 
         lastAttempt = now;
-        Serial.println("MQTT: connecting to ThingSpeak...");
+        Serial.printf(
+          "MQTT connection attempt: Wi-Fi status=%d, broker=%s, port=%u\n",
+          WiFi.status(),
+          MQTT_BROKER,
+          MQTT_PORT
+        );
+        Serial.printf(
+          "MQTT credentials configured: client ID=%s, username=%s, password=%s\n",
+          mqttCredentialConfigured(SECRET_MQTT_CLIENT_ID) ? "yes" : "no",
+          mqttCredentialConfigured(SECRET_MQTT_USERNAME) ? "yes" : "no",
+          mqttCredentialConfigured(SECRET_MQTT_PASSWORD) ? "yes" : "no"
+        );
+        Serial.println("MQTT calling connect(client ID, username, password)...");
 
         if (mqttClient.connect(
               SECRET_MQTT_CLIENT_ID,
               SECRET_MQTT_USERNAME,
               SECRET_MQTT_PASSWORD
             )) {
+          int state = mqttClient.state();
           mqttConnected = true;
           hadConnection = true;
-          Serial.println("MQTT connected to ThingSpeak");
-        } else {
           Serial.printf(
-            "MQTT connection failed, state=%d; retrying in %lu ms\n",
-            mqttClient.state(),
+            "MQTT connected to ThingSpeak; state=%d (%s)\n",
+            state,
+            mqttStateExplanation(state)
+          );
+        } else {
+          int state = mqttClient.state();
+          Serial.printf(
+            "MQTT connection failed, state=%d (%s); retrying in %lu ms\n",
+            state,
+            mqttStateExplanation(state),
             MQTT_RETRY_MS
           );
         }
