@@ -130,9 +130,8 @@ The cloud dashboard provides historical data visualization and allows sensor tre
 ### ThingSpeak Dashboard Screenshots
 
 <img width="668" height="212" alt="ThingSpeak monitoring overview" src="https://github.com/user-attachments/assets/e185ab51-6242-4bc9-a048-21750749b5c6" />
-
-<img width="632" height="404" alt="ThingSpeak sensor readings" src="https://github.com/user-attachments/assets/3bb0c0cd-0c80-484f-b137-6e1e4de7d201" />
-
+<img width="662" height="207" alt="image" src="https://github.com/user-attachments/assets/112ad106-0ae7-4a19-99de-f44e36c1df9d" />
+<img width="686" height="218" alt="image" src="https://github.com/user-attachments/assets/8eacf2d3-33b4-4de7-bbfc-fe8276438ff5" />
 <img width="645" height="230" alt="ThingSpeak monitoring statistics" src="https://github.com/user-attachments/assets/f2e74146-ee7c-4c7a-a575-b21c6e7ca0b9" />
 
 ## ThingSpeak MQTT Publishing
