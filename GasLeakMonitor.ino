@@ -28,6 +28,9 @@ const int HYSTERESIS = 75;
 const unsigned long WARMUP_MS = 180000UL;
 const unsigned long READ_MS = 1000;
 const unsigned long UPLOAD_MS = 20000;
+const int CALIBRATION_SAMPLE_COUNT = 50;
+// Prototype parameter: validate this MAD limit with controlled sensor data.
+const int CALIBRATION_MAD_LIMIT = 100;
 
 // Safe initial mode: existing HTTP upload stays enabled until MQTT is verified.
 // To switch to MQTT-only later, set MQTT true and HTTP false.
@@ -106,6 +109,9 @@ bool realAlarmOn = false;
 
 int lastRaw = 0;
 int baseline = 0;
+int calibrationSpread = 0;
+bool calibrationValid = false;
+const char* calibrationStatus = "Not calibrated";
 
 // Session analytics reset on ESP32 reboot. Warm-up, calibration, and test-mode
 // samples are excluded from these real-sensor statistics.
@@ -522,18 +528,77 @@ void mqttWorkerTask(void* parameter) {
 
 void calibrate() {
 
-  long sum = 0;
+  int samples[CALIBRATION_SAMPLE_COUNT];
 
-  for (int i = 0; i < 50; i++) {
+  for (int i = 0; i < CALIBRATION_SAMPLE_COUNT; i++) {
 
-    sum += readMQ2();
+    samples[i] = readMQ2();
 
     delay(100);
 
     server.handleClient();
   }
 
-  baseline = sum / 50;
+  for (int i = 1; i < CALIBRATION_SAMPLE_COUNT; i++) {
+
+    int value = samples[i];
+    int j = i - 1;
+
+    while (j >= 0 && samples[j] > value) {
+      samples[j + 1] = samples[j];
+      j--;
+    }
+
+    samples[j + 1] = value;
+  }
+
+  int middle = CALIBRATION_SAMPLE_COUNT / 2;
+  baseline = (samples[middle - 1] + samples[middle]) / 2;
+
+  int deviations[CALIBRATION_SAMPLE_COUNT];
+  for (int i = 0; i < CALIBRATION_SAMPLE_COUNT; i++) {
+    deviations[i] = abs(samples[i] - baseline);
+  }
+
+  for (int i = 1; i < CALIBRATION_SAMPLE_COUNT; i++) {
+
+    int value = deviations[i];
+    int j = i - 1;
+
+    while (j >= 0 && deviations[j] > value) {
+      deviations[j + 1] = deviations[j];
+      j--;
+    }
+
+    deviations[j + 1] = value;
+  }
+
+  calibrationSpread =
+    (deviations[middle - 1] + deviations[middle]) / 2;
+
+  Serial.printf(
+    "Calibration samples=%d median=%d MAD=%d limit=%d\n",
+    CALIBRATION_SAMPLE_COUNT,
+    baseline,
+    calibrationSpread,
+    CALIBRATION_MAD_LIMIT
+  );
+
+  calibrationValid = calibrationSpread <= CALIBRATION_MAD_LIMIT;
+
+  if (!calibrationValid) {
+    // Fallback: retain the existing threshold instead of applying an
+    // untrusted baseline-derived threshold.
+    calibrationStatus = "Rejected: unstable baseline (MAD above limit)";
+    Serial.printf(
+      "Calibration rejected: %s; threshold unchanged at %d\n",
+      calibrationStatus,
+      THRESHOLD
+    );
+    return;
+  }
+
+  calibrationStatus = "Accepted";
 
   if (AUTO_BASELINE) {
 
@@ -541,15 +606,14 @@ void calibrate() {
   }
 
   if (THRESHOLD > 2900) {
-
     THRESHOLD = 2900;
   }
 
   Serial.printf(
-    "Baseline=%d  Threshold=%d  Margin=%d\n",
+    "Calibration accepted: baseline=%d MAD=%d threshold=%d\n",
     baseline,
-    THRESHOLD,
-    MARGIN
+    calibrationSpread,
+    THRESHOLD
   );
 }
 
@@ -578,7 +642,11 @@ void handleData() {
 
   String j =
     "{\"raw\":" + String(lastRaw) +
+    ",\"baseline\":" + String(baseline) +
     ",\"threshold\":" + String(THRESHOLD) +
+    ",\"calibrationValid\":" + (calibrationValid ? "true" : "false") +
+    ",\"calibrationSpread\":" + String(calibrationSpread) +
+    ",\"calibrationStatus\":\"" + String(calibrationStatus) + "\"" +
     ",\"alert\":" + (displayAlarmOn() ? "true" : "false") +
     ",\"realAlert\":" + (realAlarmOn ? "true" : "false") +
     ",\"warming\":" + (warming ? "true" : "false") +
