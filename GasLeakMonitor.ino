@@ -54,6 +54,9 @@ PubSubClient mqttClient(mqttNetworkClient);
 
 struct MqttPublishMessage {
   char payload[192];
+  int raw;
+  bool realAlert;
+  int threshold;
 };
 
 QueueHandle_t mqttPublishQueue = nullptr;
@@ -96,7 +99,6 @@ const char* mqttStateExplanation(int state) {
 
 // ===== 4. VARIABLES =====
 
-bool alarmOn = false;
 bool simulate = false;
 bool warming = true;
 bool ipShown = false;
@@ -155,6 +157,12 @@ String uint64ToString(uint64_t value) {
   char buffer[21];
   snprintf(buffer, sizeof(buffer), "%llu", (unsigned long long)value);
   return String(buffer);
+}
+
+
+bool displayAlarmOn() {
+
+  return simulate || realAlarmOn;
 }
 
 
@@ -278,7 +286,8 @@ bool buildThingSpeakPayload(
   char* payload,
   size_t payloadSize,
   int raw,
-  unsigned long now
+  unsigned long now,
+  bool realAlert
 ) {
 
   double average = readingCount
@@ -293,7 +302,7 @@ bool buildThingSpeakPayload(
     payloadSize,
     "field1=%d&field2=%d&field3=%d&field4=%d&field5=%.1f&field6=%lu&field7=%llu&field8=%.1f",
     raw,
-    realAlarmOn ? 1 : 0,
+    realAlert ? 1 : 0,
     THRESHOLD,
     maxReading,
     average,
@@ -318,7 +327,13 @@ void uploadToThingSpeak(int raw, unsigned long now) {
   HTTPClient http;
 
   char payload[192];
-  if (!buildThingSpeakPayload(payload, sizeof(payload), raw, now)) {
+  if (!buildThingSpeakPayload(
+        payload,
+        sizeof(payload),
+        raw,
+        now,
+        realAlarmOn
+      )) {
     Serial.println("ThingSpeak HTTP payload build failed");
     return;
   }
@@ -352,15 +367,27 @@ void queueThingSpeakMqttPublish(int raw, unsigned long now) {
   }
 
   MqttPublishMessage message;
+  message.raw = raw;
+  message.realAlert = realAlarmOn;
+  message.threshold = THRESHOLD;
   if (!buildThingSpeakPayload(
         message.payload,
         sizeof(message.payload),
         raw,
-        now
+        now,
+        message.realAlert
       )) {
     Serial.println("MQTT payload build failed");
     return;
   }
+
+  Serial.printf(
+    "MQTT queued: raw=%d threshold=%d realAlert=%d field2=%d\n",
+    message.raw,
+    message.threshold,
+    message.realAlert ? 1 : 0,
+    message.realAlert ? 1 : 0
+  );
 
   // Queue depth is one: when offline, retain only the newest scheduled sample.
   xQueueOverwrite(mqttPublishQueue, &message);
@@ -466,6 +493,14 @@ void mqttWorkerTask(void* parameter) {
         MqttPublishMessage message;
         if (xQueueReceive(mqttPublishQueue, &message, 0) == pdTRUE) {
 
+          Serial.printf(
+            "MQTT publishing: raw=%d threshold=%d realAlert=%d field2=%d\n",
+            message.raw,
+            message.threshold,
+            message.realAlert ? 1 : 0,
+            message.realAlert ? 1 : 0
+          );
+
           if (mqttClient.publish(MQTT_TOPIC, message.payload)) {
             Serial.printf("MQTT publish sent to ThingSpeak: %s\n", message.payload);
           } else {
@@ -544,10 +579,12 @@ void handleData() {
   String j =
     "{\"raw\":" + String(lastRaw) +
     ",\"threshold\":" + String(THRESHOLD) +
-    ",\"alert\":" + (alarmOn ? "true" : "false") +
+    ",\"alert\":" + (displayAlarmOn() ? "true" : "false") +
+    ",\"realAlert\":" + (realAlarmOn ? "true" : "false") +
     ",\"warming\":" + (warming ? "true" : "false") +
     ",\"left\":" + String(left) +
     ",\"sim\":" + (simulate ? "true" : "false") +
+    ",\"simulate\":" + (simulate ? "true" : "false") +
     ",\"maxReading\":" + maxJson +
     ",\"averageReading\":" + averageJson +
     ",\"warningCount\":" + String(warningCount) +
@@ -735,24 +772,20 @@ void loop() {
 
     // ===== ALERT DETECTION =====
 
-    bool wasAlarm = alarmOn;
+    bool wasAlarm = displayAlarmOn();
 
     if (validRealReading) {
       addRealReading(lastRaw, now);
     }
 
-    // Keep simulated alarm state separate from the real sensor alarm state.
-    // This preserves the live raw reading and keeps simulated transitions out
-    // of session analytics and ThingSpeak's real alert field.
-    alarmOn = simulate || realAlarmOn;
-
-
+    // Keep the combined display state derived from simulation and the real
+    // sensor state; simulation never changes realAlarmOn or its analytics.
     // ===== ALERT STATUS MESSAGE =====
 
-    if (alarmOn != wasAlarm) {
+    if (displayAlarmOn() != wasAlarm) {
 
       Serial.println(
-        alarmOn
+        displayAlarmOn()
           ? "*** ALERT: threshold exceeded ***"
           : "--- Alert cleared ---"
       );
@@ -768,7 +801,7 @@ void loop() {
 
       THRESHOLD,
 
-      alarmOn ? "WARNING" : "NORMAL",
+      displayAlarmOn() ? "WARNING" : "NORMAL",
 
       warming ? " (warming up)" : "",
 
