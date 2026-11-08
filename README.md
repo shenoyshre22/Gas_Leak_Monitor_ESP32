@@ -61,6 +61,17 @@ The MQ-2 analog output is connected to GPIO34 through a two-resistor voltage div
 
 **Important:** The MQ-2 analog output must not be connected directly to the ESP32 ADC when it can exceed the ADC's permitted input voltage.
 
+
+Our circuit diagram:
+<img width="1536" height="1024" alt="iot_circuit_diag" src="https://github.com/user-attachments/assets/97dc3a11-c99c-465b-b584-6699d60b2183" />
+
+
+a snapshot of the MQ-2 sensor during live test with an incense stick
+
+
+<img width="167" height="261" alt="image" src="https://github.com/user-attachments/assets/802fa512-a4ff-4d7a-ab87-1d54f3664149" />
+
+
 ## Sensor Processing and Alert Mechanism
 
 The ESP32 periodically collects analog readings from the MQ-2 sensor.
