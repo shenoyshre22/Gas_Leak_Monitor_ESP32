@@ -555,26 +555,25 @@ void calibrate() {
   int middle = CALIBRATION_SAMPLE_COUNT / 2;
   baseline = (samples[middle - 1] + samples[middle]) / 2;
 
-  int deviations[CALIBRATION_SAMPLE_COUNT];
   for (int i = 0; i < CALIBRATION_SAMPLE_COUNT; i++) {
-    deviations[i] = abs(samples[i] - baseline);
+    samples[i] = abs(samples[i] - baseline);
   }
 
   for (int i = 1; i < CALIBRATION_SAMPLE_COUNT; i++) {
 
-    int value = deviations[i];
+    int value = samples[i];
     int j = i - 1;
 
-    while (j >= 0 && deviations[j] > value) {
-      deviations[j + 1] = deviations[j];
+    while (j >= 0 && samples[j] > value) {
+      samples[j + 1] = samples[j];
       j--;
     }
 
-    deviations[j + 1] = value;
+    samples[j + 1] = value;
   }
 
   calibrationSpread =
-    (deviations[middle - 1] + deviations[middle]) / 2;
+    (samples[middle - 1] + samples[middle]) / 2;
 
   Serial.printf(
     "Calibration samples=%d median=%d MAD=%d limit=%d\n",
