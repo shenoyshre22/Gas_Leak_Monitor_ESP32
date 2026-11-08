@@ -112,7 +112,6 @@ int baseline = 0;
 int calibrationSpread = 0;
 bool calibrationValid = false;
 const char* calibrationStatus = "Not calibrated";
-uint8_t highReadingCount = 0;
 
 // Session analytics reset on ESP32 reboot. Warm-up, calibration, and test-mode
 // samples are excluded from these real-sensor statistics.
@@ -198,20 +197,10 @@ void addRealReading(int reading, unsigned long now) {
 
   bool nextRealAlarm = realAlarmOn;
 
-  if (!realAlarmOn) {
-    if (reading >= THRESHOLD) {
-      if (highReadingCount < 2) {
-        highReadingCount++;
-      }
-      if (highReadingCount >= 2) {
-        nextRealAlarm = true;
-      }
-    } else {
-      highReadingCount = 0;
-    }
+  if (!realAlarmOn && reading >= THRESHOLD) {
+    nextRealAlarm = true;
   } else if (reading < (THRESHOLD - HYSTERESIS)) {
     nextRealAlarm = false;
-    highReadingCount = 0;
   }
 
   if (nextRealAlarm != realAlarmOn) {
