@@ -29,6 +29,17 @@
       <span class="endpoint-hint" id="networkStatus">Enter the IP shown in the ESP32 Serial Monitor</span>
     </section>
 
+    <section class="mock-bar" aria-label="Local sensor testing">
+      <div><strong>Mock Mode</strong><small>Test the dashboard without an ESP32</small></div>
+      <button class="toggle" id="mockToggle" type="button" role="switch" aria-checked="false" aria-label="Toggle Mock Mode"><span></span></button>
+      <strong class="mock-badge" id="mockBadge" hidden>MOCK MODE - SIMULATED DATA</strong>
+      <div class="mock-options" id="mockOptions" hidden>
+        <button class="button button-quiet" id="mockNormal" type="button">Normal</button>
+        <button class="button button-quiet" id="mockLeak" type="button">Gas Leak</button>
+        <button class="button button-quiet" id="mockAuto" type="button">Auto Simulation</button>
+      </div>
+    </section>
+
     <section class="status-panel status-safe" id="statusPanel" aria-live="polite">
       <div class="status-icon" id="statusIcon" aria-hidden="true"><span></span></div>
       <div class="status-copy">
