@@ -18,6 +18,12 @@
     greenState: byId('greenState'), redState: byId('redState'), buzzerState: byId('buzzerState'),
     sound: byId('soundToggle'), soundState: byId('soundState'), test: byId('testButton'), testState: byId('testState')
   };
+  Object.assign(ui, {
+    mock: byId('mockToggle'), mockBadge: byId('mockBadge'), mockOptions: byId('mockOptions'),
+    mockNormal: byId('mockNormal'), mockLeak: byId('mockLeak'), mockAuto: byId('mockAuto'),
+    analyticsHeading: document.querySelector('.analytics-panel h2'),
+    analyticsNote: document.querySelector('.analytics-note')
+  });
 
   let baseUrl = '';
   let soundEnabled = false;
@@ -29,6 +35,12 @@
   let sirenHighTone = false;
   let latestData = null;
   let polling = false;
+  let mockEnabled = false;
+  let mockScenario = 'normal';
+  let mockTimer = null;
+  let mockGeneration = 0;
+  const mockStats = { samples: [], total: 0, max: 0, count: 0, duration: 0, warning: false, ticks: 0 };
+  const MOCK_THRESHOLD = 1800;
 
   try {
     const saved = localStorage.getItem('gasMonitorEsp32Address');
@@ -53,6 +65,7 @@
   }
 
   function setConnection(connected, detail) {
+    if (mockEnabled) return;
     ui.connection.classList.toggle('online', connected);
     ui.connection.classList.toggle('offline', !connected);
     ui.connectionLabel.textContent = connected ? 'ESP32 connected' : (baseUrl ? 'ESP32 unavailable' : 'Not connected');
@@ -143,15 +156,18 @@
   }
 
   async function fetchData() {
-    if (!baseUrl || polling) return;
+    if (mockEnabled || !baseUrl || polling) return;
+    const generation = mockGeneration;
     polling = true;
     try {
       const response = await fetch(`${baseUrl}/data`, { cache: 'no-store' });
       if (!response.ok) throw new Error(`ESP32 responded with HTTP ${response.status}.`);
       const data = await response.json();
+      if (mockEnabled || generation !== mockGeneration) return;
       render(data);
       setConnection(true, 'Device API reachable · polling every second');
     } catch (error) {
+      if (mockEnabled || generation !== mockGeneration) return;
       setConnection(false, error instanceof TypeError ? 'Could not reach the device. Check its IP and network.' : error.message);
     } finally {
       polling = false;
@@ -276,13 +292,80 @@
       ui.address.value = baseUrl;
       try { localStorage.setItem('gasMonitorEsp32Address', baseUrl); } catch (_) { /* Optional preference. */ }
       setConnection(false, 'Connecting to the ESP32 data endpoint…');
-      fetchData();
+      if (!mockEnabled) fetchData();
     } catch (error) {
       setConnection(false, error.message);
     }
   }
 
+  function mockSample() {
+    const stats = mockStats;
+    stats.ticks++;
+    const warning = mockScenario === 'leak' || (mockScenario === 'auto' && stats.ticks % 12 >= 6);
+    const raw = warning ? 2100 + Math.floor(Math.random() * 850) : 450 + Math.floor(Math.random() * 850);
+    if (warning && !stats.warning) stats.count++;
+    if (warning) stats.duration++;
+    stats.warning = warning;
+    stats.total += raw;
+    stats.max = Math.max(stats.max, raw);
+    stats.samples.push(raw);
+    if (stats.samples.length > 10) stats.samples.shift();
+    render({ raw, threshold: MOCK_THRESHOLD, alert: warning, warming: false, sim: false,
+      maxReading: stats.max, averageReading: stats.total / stats.ticks,
+      rollingAverage: stats.samples.reduce((sum, value) => sum + value, 0) / stats.samples.length,
+      warningCount: stats.count, warningDuration: stats.duration });
+    ui.mode.textContent = 'MOCK MODE';
+    ui.message.textContent = warning
+      ? 'Simulated gas leak: reading is above the alarm threshold.'
+      : 'Simulated normal reading is below the alarm threshold.';
+  }
+
+  function selectMockScenario(scenario) {
+    mockScenario = scenario;
+    if (mockTimer) window.clearInterval(mockTimer);
+    mockTimer = null;
+    for (const [name, button] of [['normal', ui.mockNormal], ['leak', ui.mockLeak], ['auto', ui.mockAuto]]) {
+      button.setAttribute('aria-pressed', String(name === scenario));
+    }
+    mockSample();
+    mockTimer = window.setInterval(mockSample, POLL_INTERVAL_MS);
+  }
+
+  function setMockMode(enabled) {
+    mockEnabled = enabled;
+    mockGeneration++;
+    ui.mock.setAttribute('aria-checked', String(enabled));
+    ui.mockBadge.hidden = !enabled;
+    ui.mockOptions.hidden = !enabled;
+    ui.address.disabled = enabled;
+    ui.connect.disabled = enabled;
+    ui.test.disabled = enabled;
+    ui.analyticsHeading.textContent = enabled ? 'Simulated sensor history' : 'Real sensor history';
+    ui.analyticsNote.textContent = enabled
+      ? 'Local simulated readings and warning events. Values reset when Mock Mode starts.'
+      : 'Warm-up, calibration and test-mode samples are excluded. Values reset when the ESP32 reboots.';
+    if (mockTimer) window.clearInterval(mockTimer);
+    mockTimer = null;
+    if (enabled) {
+      Object.assign(mockStats, { samples: [], total: 0, max: 0, count: 0, duration: 0, warning: false, ticks: 0 });
+      ui.connection.classList.remove('offline');
+      ui.connection.classList.add('online');
+      ui.connectionLabel.textContent = 'Mock sensor active';
+      ui.connectionDetail.textContent = 'Local simulated data';
+      ui.network.textContent = 'ESP32 polling paused during Mock Mode';
+      selectMockScenario('normal');
+    } else {
+      showWaiting('Connect to the ESP32 to view live MQ-2 readings.');
+      setConnection(false, baseUrl ? 'Reconnecting to the ESP32 data endpoint…' : 'Enter the IP shown in the ESP32 Serial Monitor');
+      if (baseUrl) fetchData();
+    }
+  }
+
   ui.connect.addEventListener('click', connect);
+  ui.mock.addEventListener('click', () => setMockMode(!mockEnabled));
+  ui.mockNormal.addEventListener('click', () => selectMockScenario('normal'));
+  ui.mockLeak.addEventListener('click', () => { activateAudioFromGesture(); selectMockScenario('leak'); });
+  ui.mockAuto.addEventListener('click', () => { activateAudioFromGesture(); selectMockScenario('auto'); });
   ui.address.addEventListener('keydown', (event) => { if (event.key === 'Enter') connect(); });
   ui.sound.addEventListener('click', () => {
     soundEnabled = !soundEnabled;
@@ -292,7 +375,7 @@
     syncSiren();
   });
   ui.test.addEventListener('click', async () => {
-    if (!baseUrl) return;
+    if (mockEnabled || !baseUrl) return;
     activateAudioFromGesture();
     const nextState = ui.test.getAttribute('aria-pressed') !== 'true';
     ui.test.disabled = true;
@@ -303,7 +386,7 @@
     } catch (error) {
       ui.network.textContent = error instanceof TypeError ? 'Could not reach the test control endpoint.' : error.message;
     } finally {
-      ui.test.disabled = !ui.connection.classList.contains('online');
+      ui.test.disabled = mockEnabled || !ui.connection.classList.contains('online');
     }
   });
 
